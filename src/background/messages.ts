@@ -23,6 +23,9 @@ export interface StatusResponse {
   trackingEnabled: boolean
   isTracking: boolean
   currentDomain: string | null
+  currentUrl: string | null
+  /** Elapsed ms of the in-progress session (capped; excludes paused/slept time). */
+  sessionElapsedMs: number | null
 }
 
 export interface ExportPayload {

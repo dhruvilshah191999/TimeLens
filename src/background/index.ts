@@ -1,5 +1,4 @@
 import {
-  ACTIVE_GAP_MAX_MS,
   AGGREGATE_INTERVAL_MIN,
   CLEANUP_INTERVAL_MIN,
   HEARTBEAT_INTERVAL_MIN,
@@ -22,6 +21,7 @@ import {
   setSettings,
 } from './storage'
 import {
+  activeElapsedMs,
   endActiveSession,
   handleHeartbeat,
   handleHistoryStateUpdated,
@@ -181,14 +181,11 @@ async function getTodayLive(): Promise<DailyTotal> {
     }
   }
 
-  // Fold in the elapsed time of the active session, capped so a sleep/suspend
-  // gap (no heartbeats) is never counted.
+  // Fold in the elapsed time of the active session (capped so paused/slept
+  // time is never counted).
   const active = await getActiveSession()
   if (active && dateKey(active.startedAt) === today) {
-    const now = Date.now()
-    const end =
-      now - active.lastSeenAt > ACTIVE_GAP_MAX_MS ? active.lastSeenAt : now
-    const elapsed = end - active.startedAt
+    const elapsed = activeElapsedMs(active)
     if (elapsed > 0) {
       live.totalMs += elapsed
       live.sessionCount += 1
@@ -221,12 +218,8 @@ async function getTodayHourly(): Promise<number[]> {
   ])
   for (const s of sessions) addSpan(s.startedAt, s.endedAt)
   for (const s of buffer) addSpan(s.startedAt, s.endedAt)
-  if (active) {
-    const now = Date.now()
-    const end =
-      now - active.lastSeenAt > ACTIVE_GAP_MAX_MS ? active.lastSeenAt : now
-    addSpan(active.startedAt, end)
-  }
+  if (active)
+    addSpan(active.startedAt, active.startedAt + activeElapsedMs(active))
 
   return buckets
 }
@@ -272,12 +265,15 @@ async function handleMessage<M extends Message>(
     }
 
     case 'GET_STATUS': {
+      await ensureActiveSession()
       const settings = await getSettings()
       const active = await getActiveSession()
       return {
         trackingEnabled: settings.trackingEnabled,
         isTracking: !!active,
         currentDomain: active?.domain ?? null,
+        currentUrl: active?.url ?? null,
+        sessionElapsedMs: active ? activeElapsedMs(active) : null,
       } as ResponseMap[M['type']]
     }
 
@@ -293,6 +289,8 @@ async function handleMessage<M extends Message>(
         trackingEnabled: message.enabled,
         isTracking: !!active,
         currentDomain: active?.domain ?? null,
+        currentUrl: active?.url ?? null,
+        sessionElapsedMs: active ? activeElapsedMs(active) : null,
       } as ResponseMap[M['type']]
     }
 

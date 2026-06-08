@@ -1,4 +1,5 @@
 import { Icon } from '@/components/Icon'
+import { LensMark } from '@/components/LensMark'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { cn } from '@/lib/utils'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -20,7 +21,7 @@ function Sidebar() {
     <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r bg-card px-3 py-5">
       <div className="mb-8 flex items-center gap-2.5 px-2">
         <span className="flex size-9 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-sm">
-          <Icon name="stopwatch" className="text-xl" />
+          <LensMark className="size-5" />
         </span>
         <div className="leading-tight">
           <p className="text-sm font-semibold">TimeLens</p>

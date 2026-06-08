@@ -91,4 +91,11 @@ export interface ActiveSession {
    * we never credit time past lastSeenAt when a large gap is detected.
    */
   lastSeenAt: number
+  /**
+   * Set when the browser loses focus (alt-tab to another app, or our popup
+   * opening). Accrual freezes at this moment; if focus returns to the same tab
+   * the session resumes (the paused gap is not counted), otherwise it's
+   * finalized at pausedAt. Absent while actively focused.
+   */
+  pausedAt?: number
 }

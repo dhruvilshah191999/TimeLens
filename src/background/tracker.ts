@@ -25,6 +25,34 @@ function isTrackableUrl(url: string | undefined): boolean {
 }
 
 /**
+ * Time credited to an active session right now: from startedAt up to the
+ * earliest of — pausedAt (focus lost), lastSeenAt (if a sleep gap is detected),
+ * or now. Never counts paused or slept time.
+ */
+export function activeElapsedMs(active: ActiveSession): number {
+  const now = Date.now()
+  let end = active.pausedAt ?? now
+  if (now - active.lastSeenAt > ACTIVE_GAP_MAX_MS) {
+    end = Math.min(end, active.lastSeenAt)
+  }
+  return Math.max(0, end - active.startedAt)
+}
+
+/**
+ * Mark the session live again after activity. If it was paused, shift startedAt
+ * forward by the paused gap so that idle time isn't counted and the elapsed
+ * value continues unchanged (the "Now" timer never jumps back). Mutates active.
+ */
+function resume(active: ActiveSession): void {
+  const now = Date.now()
+  if (active.pausedAt != null) {
+    active.startedAt += now - active.pausedAt
+    active.pausedAt = undefined
+  }
+  active.lastSeenAt = now
+}
+
+/**
  * Finalize the in-progress session. Sessions shorter than MIN_SESSION_MS are
  * discarded as noise. Idempotent — safe to call when nothing is active.
  */
@@ -34,12 +62,9 @@ export async function endActiveSession(): Promise<void> {
   // Clear first so concurrent events can't double-finalize the same session.
   await setActiveSession(null)
 
-  // If a large gap has elapsed since the last heartbeat, the machine was
-  // asleep/suspended — credit time only up to lastSeenAt, not across the gap.
-  const now = Date.now()
-  const endedAt =
-    now - active.lastSeenAt > ACTIVE_GAP_MAX_MS ? active.lastSeenAt : now
-  const durationMs = endedAt - active.startedAt
+  // Credit only awake, focused time (excludes paused and slept gaps).
+  const durationMs = activeElapsedMs(active)
+  const endedAt = active.startedAt + durationMs
   if (durationMs < MIN_SESSION_MS) return
 
   const session: Session = {
@@ -98,9 +123,10 @@ export async function switchToActiveTab(): Promise<void> {
     active.tabId === tab.id &&
     domainFromUrl(tab.url ?? '') === active.domain
   ) {
+    // Same page — resume the running session (continues without resetting).
+    resume(active)
     active.url = tab.url ?? active.url
     if (tab.title) active.title = tab.title
-    active.lastSeenAt = Date.now()
     await setActiveSession(active)
     return
   }
@@ -128,8 +154,14 @@ export async function handleWindowFocusChanged(
   windowId: number,
 ): Promise<void> {
   if (windowId === chrome.windows.WINDOW_ID_NONE) {
-    // Browser lost focus (user alt-tabbed to another app).
-    await endActiveSession()
+    // Browser lost focus — alt-tab to another app, OR our own popup opening.
+    // Pause (freeze accrual) rather than end: if focus returns to the same tab
+    // we resume seamlessly, so opening the popup no longer restarts the timer.
+    const active = await getActiveSession()
+    if (active && active.pausedAt == null) {
+      active.pausedAt = Date.now()
+      await setActiveSession(active)
+    }
     return
   }
   await switchToActiveTab()
@@ -152,13 +184,15 @@ export async function handleIdleStateChanged(
     await switchToActiveTab()
     return
   }
-  // 'idle' or 'locked' — keep counting if the active tab is playing media
-  // (video/call/music): the user is passively engaged. We stop the clock when
-  // playback ends (handleTabUpdated audible change) or when they return.
+  // 'idle' or 'locked' — keep counting if media is playing (video/call/music).
+  // Otherwise PAUSE (freeze accrual) rather than end, so coming back resumes the
+  // SAME session and the "Now" timer doesn't reset. The session is only
+  // finalized on a real context change (different domain/tab, close, or sleep).
   const active = await getActiveSession()
-  if (active && (await isTabAudible(active.tabId))) return
-  await endActiveSession()
-  await flushBuffer()
+  if (!active || active.pausedAt != null) return
+  if (await isTabAudible(active.tabId)) return
+  active.pausedAt = Date.now()
+  await setActiveSession(active)
 }
 
 /**
@@ -184,17 +218,12 @@ export async function handleHeartbeat(): Promise<void> {
   await setActiveSession(active)
 }
 
-/** domain + path of a URL, used to detect real navigations vs. SPA noise. */
-function pagePath(url: string): string {
-  try {
-    const u = new URL(url)
-    return `${u.hostname.replace(/^www\./, '')}${u.pathname}`
-  } catch {
-    return url
-  }
-}
-
-/** SPA route change (YouTube video switch, Twitter feed, etc.). */
+/**
+ * SPA route change (YouTube video switch, Twitter feed, etc.). We keep the
+ * session running across same-domain navigations — only a real DOMAIN change
+ * starts a new session, so the "Now" timer doesn't reset when you switch
+ * videos. Metadata (url/title) is refreshed in place.
+ */
 export async function handleHistoryStateUpdated(
   details: chrome.webNavigation.WebNavigationTransitionCallbackDetails,
 ): Promise<void> {
@@ -202,17 +231,22 @@ export async function handleHistoryStateUpdated(
   const active = await getActiveSession()
   if (!active || active.tabId !== details.tabId) return // only the tracked tab
 
-  // Players (Netflix etc.) fire history updates constantly during playback with
-  // no real path change. Only split the session on an actual page change.
-  if (pagePath(details.url) === pagePath(active.url)) return
-
-  await endActiveSession()
-  try {
-    const tab = await chrome.tabs.get(details.tabId)
-    await startSession(tab)
-  } catch {
-    // Tab closed mid-navigation.
+  const newDomain = domainFromUrl(details.url)
+  if (newDomain && newDomain !== active.domain) {
+    await endActiveSession()
+    try {
+      const tab = await chrome.tabs.get(details.tabId)
+      await startSession(tab)
+    } catch {
+      // Tab closed mid-navigation.
+    }
+    return
   }
+
+  // Same domain (e.g. next YouTube video) — keep counting, just refresh.
+  resume(active)
+  if (details.url) active.url = details.url
+  await setActiveSession(active)
 }
 
 /**
@@ -231,16 +265,16 @@ export async function handleTabUpdated(
   const active = await getActiveSession()
 
   // Media stopped (paused/ended) on the tracked tab. If the user is also idle,
-  // they've stopped watching while away — stop the clock now. If they're still
-  // present we keep counting (they may be reading the paused page).
+  // they've stopped watching while away — PAUSE (freeze) the clock. We don't
+  // end here, so resuming continues the same session without resetting.
   if (changeInfo.audible === false && active && active.tabId === tabId) {
     const { idleThresholdSec } = await getSettings()
     const state = await chrome.idle.queryState(
       Math.max(MIN_IDLE_THRESHOLD_SEC, idleThresholdSec),
     )
-    if (state !== 'active') {
-      await endActiveSession()
-      await flushBuffer()
+    if (state !== 'active' && active.pausedAt == null) {
+      active.pausedAt = Date.now()
+      await setActiveSession(active)
     }
     return
   }
@@ -260,10 +294,10 @@ export async function handleTabUpdated(
   const newDomain = domainFromUrl(tab.url ?? '')
 
   if (onTrackedTab && active && newDomain === active.domain) {
-    // Same site — just refresh url/title without resetting the clock.
+    // Same site — keep the clock running (resume if paused), refresh metadata.
+    resume(active)
     active.url = tab.url ?? active.url
     if (tab.title) active.title = tab.title
-    active.lastSeenAt = Date.now()
     await setActiveSession(active)
     return
   }
