@@ -5,6 +5,7 @@ import {
 } from '@/lib/constants'
 import { domainFromUrl } from '@/lib/time-utils'
 import type { ActiveSession, Session } from '@/lib/types'
+import { classify } from './classifier'
 import {
   flushBuffer,
   getActiveSession,
@@ -76,6 +77,23 @@ export async function endActiveSession(): Promise<void> {
     endedAt,
     durationMs,
   }
+
+  // Classify intent (Phase 2). Rules are instant; the AI tier only runs when the
+  // user opted in and the rule guess is shaky, and never throws (falls back to
+  // rules), so this can't lose the session.
+  try {
+    const { classificationEnabled } = await getSettings()
+    const result = await classify(
+      { domain: session.domain, url: session.url, title: session.title },
+      classificationEnabled,
+    )
+    session.intent = result.intent
+    session.intentConfidence = result.confidence
+    session.intentSource = result.source
+  } catch {
+    // Leave the session unclassified; backfill/reclassify can fill it in later.
+  }
+
   // Persist immediately (and merge with the previous same-domain session) so
   // the dashboard's recent sessions and weekly totals stay current. The write
   // is tiny — one finalized session per page visit.

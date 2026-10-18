@@ -6,6 +6,7 @@ import {
 import { STORAGE_KEYS } from '@/lib/storage-keys'
 import { dateKey } from '@/lib/time-utils'
 import type { ActiveSession, DailyTotal, Session, Settings } from '@/lib/types'
+import type { AiProgress, ClassifyResult } from './classifier'
 
 /**
  * Typed wrappers around chrome.storage. Persistent data lives in
@@ -43,9 +44,13 @@ export async function getSessions(): Promise<Session[]> {
   return (result[STORAGE_KEYS.SESSIONS] as Session[] | undefined) ?? []
 }
 
+async function setSessions(sessions: Session[]): Promise<void> {
+  await chrome.storage.local.set({ [STORAGE_KEYS.SESSIONS]: sessions })
+}
+
 /**
- * Append sessions, merging each into the previous one when it's the same domain
- * within SESSION_MERGE_GAP_MS. Keeps "Recent sessions" clean without affecting
+ * Append sessions, merging each into the previous one when it has the same domain
+ * and intent within SESSION_MERGE_GAP_MS. Keeps "Recent sessions" clean without affecting
  * totals (durations are summed; the bridged gap is not counted).
  */
 async function appendSessions(sessions: Session[]): Promise<void> {
@@ -53,9 +58,12 @@ async function appendSessions(sessions: Session[]): Promise<void> {
   const existing = await getSessions()
   for (const s of sessions) {
     const last = existing[existing.length - 1]
+    // Same intent is required: merging a tutorial with a meme video on the
+    // same site would collapse two intents into one record.
     const canMerge =
       last &&
       last.domain === s.domain &&
+      last.intent === s.intent &&
       s.startedAt >= last.startedAt &&
       s.startedAt - last.endedAt <= SESSION_MERGE_GAP_MS
     if (canMerge) {
@@ -163,6 +171,82 @@ export async function flushBuffer(): Promise<void> {
   await appendSessions(buffer)
   await setDailyTotals(totals)
   await chrome.storage.session.set({ [STORAGE_KEYS.SESSION_BUFFER]: [] })
+}
+
+// ---------------------------------------------------------------------------
+// Intent classification (Phase 2)
+// ---------------------------------------------------------------------------
+
+/** Bump when the classification scheme changes to trigger a one-time backfill. */
+const INTENT_SCHEMA_VERSION = 1
+
+async function getIntentVersion(): Promise<number> {
+  const r = await chrome.storage.local.get(STORAGE_KEYS.INTENT_VERSION)
+  return (r[STORAGE_KEYS.INTENT_VERSION] as number | undefined) ?? 0
+}
+
+/** True until the current backfill version has been applied. */
+export async function needsIntentBackfill(): Promise<boolean> {
+  return (await getIntentVersion()) < INTENT_SCHEMA_VERSION
+}
+
+/** On-device model download progress (ephemeral, chrome.storage.session). */
+export async function getAiProgress(): Promise<AiProgress | null> {
+  const r = await chrome.storage.session.get(STORAGE_KEYS.AI_DOWNLOAD)
+  return (r[STORAGE_KEYS.AI_DOWNLOAD] as AiProgress | undefined) ?? null
+}
+
+export async function setAiProgress(p: AiProgress): Promise<void> {
+  await chrome.storage.session.set({ [STORAGE_KEYS.AI_DOWNLOAD]: p })
+}
+
+/**
+ * Recompute the byIntent maps for exactly the days the given sessions cover,
+ * then persist both sessions and totals. Days with no sessions present (e.g.
+ * older than the retention window) keep their previously aggregated intent.
+ */
+async function persistAndRebuildIntents(sessions: Session[]): Promise<void> {
+  const totals = await getDailyTotals()
+  const touchedDates = new Set(sessions.map((s) => dateKey(s.startedAt)))
+  for (const d of touchedDates) {
+    const day = totals[d]
+    if (day) day.byIntent = {}
+  }
+  for (const s of sessions) {
+    if (!s.intent) continue
+    const day = totals[dateKey(s.startedAt)]
+    if (!day) continue
+    day.byIntent[s.intent] = (day.byIntent[s.intent] ?? 0) + s.durationMs
+  }
+  await setSessions(sessions)
+  await setDailyTotals(totals)
+}
+
+/**
+ * Classify stored sessions with the supplied classifier, rebuild the daily
+ * byIntent maps, and mark the backfill version as applied.
+ * @param onlyUnclassified skip sessions that already have an intent.
+ * @returns number of sessions (re)classified.
+ */
+export async function reclassifyAll(
+  classifier: (s: Session) => Promise<ClassifyResult> | ClassifyResult,
+  onlyUnclassified: boolean,
+): Promise<number> {
+  const sessions = await getSessions()
+  let count = 0
+  for (const s of sessions) {
+    if (onlyUnclassified && s.intent) continue
+    const r = await classifier(s)
+    s.intent = r.intent
+    s.intentConfidence = r.confidence
+    s.intentSource = r.source
+    count++
+  }
+  await persistAndRebuildIntents(sessions)
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.INTENT_VERSION]: INTENT_SCHEMA_VERSION,
+  })
+  return count
 }
 
 // ---------------------------------------------------------------------------

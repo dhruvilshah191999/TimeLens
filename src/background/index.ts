@@ -6,18 +6,29 @@ import {
 import { ALARM_NAMES, CONTEXT_MENU_IDS } from '@/lib/storage-keys'
 import { domainFromUrl } from '@/lib/time-utils'
 import { dateKey } from '@/lib/time-utils'
-import type { DailyTotal } from '@/lib/types'
+import type { ActiveSession, DailyTotal, Session } from '@/lib/types'
+import {
+  aiAvailability,
+  classify,
+  classifyByRules,
+  classifyQuick,
+  prepareAiModel,
+} from './classifier'
 import { applyIdleThreshold } from './idle-handler'
-import type { Message, ResponseMap } from './messages'
+import type { Message, ResponseMap, StatusResponse } from './messages'
 import {
   cleanupOldSessions,
   flushBuffer,
   getActiveSession,
+  getAiProgress,
   getBuffer,
   getDailyTotals,
   getSessions,
   getSettings,
+  needsIntentBackfill,
+  reclassifyAll,
   resetAllData,
+  setAiProgress,
   setSettings,
 } from './storage'
 import {
@@ -59,6 +70,12 @@ async function bootstrap(): Promise<void> {
       contexts: ['page', 'action'],
     })
   })
+
+  // One-time: classify sessions recorded before Phase 2 shipped (instant
+  // ruleset) so the dashboard shows real intent data immediately.
+  if (await needsIntentBackfill()) {
+    await reclassifyAll((s) => classifyByRules(s), true)
+  }
 
   // Seed a session for the tab that's already focused at startup/install —
   // otherwise tracking wouldn't begin until the next tab switch or navigation.
@@ -191,37 +208,73 @@ async function getTodayLive(): Promise<DailyTotal> {
       live.sessionCount += 1
       live.byDomain[active.domain] =
         (live.byDomain[active.domain] ?? 0) + elapsed
+      // Reflect the in-progress page in the intent breakdown too (rules or a
+      // cached AI answer — never prompts the model on this hot path).
+      const { classificationEnabled } = await getSettings()
+      const { intent } = await classifyQuick(active, classificationEnabled)
+      live.byIntent[intent] = (live.byIntent[intent] ?? 0) + elapsed
     }
   }
   return live
 }
 
-/**
- * Tracked ms per local hour (0–23) for today, from persisted sessions + buffer
- * + the in-progress session. Powers the activity sparklines.
- */
-async function getTodayHourly(): Promise<number[]> {
-  const buckets = new Array(24).fill(0)
-  const today = dateKey(Date.now())
-
-  const addSpan = (startedAt: number, endedAt: number) => {
-    if (dateKey(startedAt) !== today) return
-    // Attribute the whole span to its start hour — good enough for a sparkline.
-    const hour = new Date(startedAt).getHours()
-    buckets[hour] += endedAt - startedAt
+/** The in-progress session as a Session-shaped record (not persisted). */
+async function liveSession(active: ActiveSession): Promise<Session | null> {
+  const durationMs = activeElapsedMs(active)
+  if (durationMs <= 0) return null
+  const { classificationEnabled } = await getSettings()
+  const r = await classifyQuick(active, classificationEnabled)
+  return {
+    id: 'live',
+    domain: active.domain,
+    url: active.url,
+    title: active.title,
+    startedAt: active.startedAt,
+    endedAt: active.startedAt + durationMs,
+    durationMs,
+    intent: r.intent,
+    intentConfidence: r.confidence,
+    intentSource: r.source,
   }
+}
 
+/** Persisted + buffered + live sessions that started within a date range. */
+async function getSessionsRange(
+  startDate: string,
+  endDate: string,
+): Promise<Session[]> {
   const [sessions, buffer, active] = await Promise.all([
     getSessions(),
     getBuffer(),
     getActiveSession(),
   ])
-  for (const s of sessions) addSpan(s.startedAt, s.endedAt)
-  for (const s of buffer) addSpan(s.startedAt, s.endedAt)
-  if (active)
-    addSpan(active.startedAt, active.startedAt + activeElapsedMs(active))
+  const all = [...sessions, ...buffer]
+  const live = active ? await liveSession(active) : null
+  if (live) all.push(live)
+  return all
+    .filter((s) => {
+      const d = dateKey(s.startedAt)
+      return d >= startDate && d <= endDate
+    })
+    .sort((a, b) => a.startedAt - b.startedAt)
+}
 
-  return buckets
+async function buildStatus(): Promise<StatusResponse> {
+  const settings = await getSettings()
+  const active = await getActiveSession()
+  const r = active
+    ? await classifyQuick(active, settings.classificationEnabled)
+    : null
+  return {
+    trackingEnabled: settings.trackingEnabled,
+    isTracking: !!active,
+    currentDomain: active?.domain ?? null,
+    currentUrl: active?.url ?? null,
+    currentTitle: active?.title ?? null,
+    currentIntent: r?.intent ?? null,
+    currentIntentSource: r?.source ?? null,
+    sessionElapsedMs: active ? activeElapsedMs(active) : null,
+  }
 }
 
 async function handleMessage<M extends Message>(
@@ -232,9 +285,6 @@ async function handleMessage<M extends Message>(
       // Resume tracking the focused tab if the worker restarted idle-less.
       await ensureActiveSession()
       return (await getTodayLive()) as ResponseMap[M['type']]
-
-    case 'GET_TODAY_HOURLY':
-      return (await getTodayHourly()) as ResponseMap[M['type']]
 
     case 'GET_DAILY_RANGE': {
       const totals = await getDailyTotals()
@@ -253,6 +303,12 @@ async function handleMessage<M extends Message>(
       return recent as ResponseMap[M['type']]
     }
 
+    case 'GET_SESSIONS_RANGE':
+      return (await getSessionsRange(
+        message.startDate,
+        message.endDate,
+      )) as ResponseMap[M['type']]
+
     case 'GET_SETTINGS':
       return (await getSettings()) as ResponseMap[M['type']]
 
@@ -261,20 +317,21 @@ async function handleMessage<M extends Message>(
       if (message.patch.idleThresholdSec !== undefined) {
         await applyIdleThreshold()
       }
+      // Turning smart classification ON proactively warms up / downloads the
+      // on-device model (if the Prompt API is present), streaming progress to
+      // session storage for the Settings UI to poll. Fire-and-forget so the
+      // settings save returns immediately.
+      if (message.patch.classificationEnabled === true) {
+        void prepareAiModel((p) => {
+          void setAiProgress(p)
+        })
+      }
       return next as ResponseMap[M['type']]
     }
 
     case 'GET_STATUS': {
       await ensureActiveSession()
-      const settings = await getSettings()
-      const active = await getActiveSession()
-      return {
-        trackingEnabled: settings.trackingEnabled,
-        isTracking: !!active,
-        currentDomain: active?.domain ?? null,
-        currentUrl: active?.url ?? null,
-        sessionElapsedMs: active ? activeElapsedMs(active) : null,
-      } as ResponseMap[M['type']]
+      return (await buildStatus()) as ResponseMap[M['type']]
     }
 
     case 'SET_TRACKING': {
@@ -284,14 +341,7 @@ async function handleMessage<M extends Message>(
       } else {
         await switchToActiveTab()
       }
-      const active = await getActiveSession()
-      return {
-        trackingEnabled: message.enabled,
-        isTracking: !!active,
-        currentDomain: active?.domain ?? null,
-        currentUrl: active?.url ?? null,
-        sessionElapsedMs: active ? activeElapsedMs(active) : null,
-      } as ResponseMap[M['type']]
+      return (await buildStatus()) as ResponseMap[M['type']]
     }
 
     case 'EXCLUDE_DOMAIN': {
@@ -334,6 +384,35 @@ async function handleMessage<M extends Message>(
     case 'RESET_DATA': {
       await resetAllData()
       return { ok: true } as ResponseMap[M['type']]
+    }
+
+    case 'GET_AI_STATUS': {
+      const [availability, settings, download] = await Promise.all([
+        aiAvailability(),
+        getSettings(),
+        getAiProgress(),
+      ])
+      return {
+        availability,
+        enabled: settings.classificationEnabled,
+        download: download ?? { state: 'idle', progress: 0 },
+      } as ResponseMap[M['type']]
+    }
+
+    case 'RECLASSIFY_ALL': {
+      // Flush so just-ended sessions are included, then re-run every session
+      // through the active engine (AI tier included when the user enabled it).
+      await flushBuffer()
+      const { classificationEnabled } = await getSettings()
+      const count = await reclassifyAll(
+        (s) =>
+          classify(
+            { domain: s.domain, url: s.url, title: s.title },
+            classificationEnabled,
+          ),
+        false,
+      )
+      return { ok: true, count } as ResponseMap[M['type']]
     }
   }
 }

@@ -47,6 +47,8 @@ export interface Session {
   intent?: string
   /** 0-1 (Phase 2) */
   intentConfidence?: number
+  /** Which engine produced the intent: keyword rules or on-device AI. */
+  intentSource?: 'rule' | 'ai'
 }
 
 export interface Settings {

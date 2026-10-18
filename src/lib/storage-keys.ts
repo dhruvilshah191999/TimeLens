@@ -10,6 +10,10 @@ export const STORAGE_KEYS = {
   ACTIVE_SESSION: 'active-session',
   /** Session[] — write buffer not yet flushed to SESSIONS (chrome.storage.session). */
   SESSION_BUFFER: 'session-buffer',
+  /** number — intent backfill schema version that has been applied. */
+  INTENT_VERSION: 'intent-version',
+  /** AiProgress — on-device model download state (chrome.storage.session). */
+  AI_DOWNLOAD: 'ai-download',
 } as const
 
 /** chrome.alarms names. */
