@@ -45,6 +45,25 @@ import {
 } from './tracker'
 
 // ---------------------------------------------------------------------------
+// Serialization
+// ---------------------------------------------------------------------------
+
+/**
+ * Every listener and message handler does read-modify-write on chrome.storage
+ * across awaits. Chrome fires events concurrently (tab switch + focus change +
+ * popup poll), and interleaved handlers would double-append or drop sessions
+ * and corrupt daily totals. Running them one at a time through this queue
+ * keeps storage consistent. Handlers never enqueue each other, so it can't
+ * deadlock.
+ */
+let queue: Promise<unknown> = Promise.resolve()
+function serialized<T>(task: () => Promise<T>): Promise<T> {
+  const run = queue.then(task, task)
+  queue = run.catch(() => undefined)
+  return run
+}
+
+// ---------------------------------------------------------------------------
 // Lifecycle: install / startup
 // ---------------------------------------------------------------------------
 
@@ -93,10 +112,10 @@ async function ensureActiveSession(): Promise<void> {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  void bootstrap()
+  void serialized(bootstrap)
 })
 chrome.runtime.onStartup.addListener(() => {
-  void bootstrap()
+  void serialized(bootstrap)
 })
 
 // ---------------------------------------------------------------------------
@@ -104,27 +123,27 @@ chrome.runtime.onStartup.addListener(() => {
 // ---------------------------------------------------------------------------
 
 chrome.tabs.onActivated.addListener((info) => {
-  void handleTabActivated(info)
+  void serialized(() => handleTabActivated(info))
 })
 
 chrome.windows.onFocusChanged.addListener((windowId) => {
-  void handleWindowFocusChanged(windowId)
+  void serialized(() => handleWindowFocusChanged(windowId))
 })
 
 chrome.idle.onStateChanged.addListener((state) => {
-  void handleIdleStateChanged(state)
+  void serialized(() => handleIdleStateChanged(state))
 })
 
 chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
-  void handleHistoryStateUpdated(details)
+  void serialized(() => handleHistoryStateUpdated(details))
 })
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  void handleTabUpdated(tabId, changeInfo, tab)
+  void serialized(() => handleTabUpdated(tabId, changeInfo, tab))
 })
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  void handleTabRemoved(tabId)
+  void serialized(() => handleTabRemoved(tabId))
 })
 
 // ---------------------------------------------------------------------------
@@ -133,11 +152,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAMES.AGGREGATE) {
-    void flushBuffer()
+    void serialized(flushBuffer)
   } else if (alarm.name === ALARM_NAMES.CLEANUP) {
-    void cleanupOldSessions()
+    void serialized(cleanupOldSessions)
   } else if (alarm.name === ALARM_NAMES.HEARTBEAT) {
-    void handleHeartbeat()
+    void serialized(handleHeartbeat)
   }
 })
 
@@ -150,7 +169,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   const url = info.pageUrl ?? tab?.url ?? ''
   const domain = domainFromUrl(url)
   if (!domain) return
-  void (async () => {
+  void serialized(async () => {
     const settings = await getSettings()
     if (!settings.excludedDomains.includes(domain)) {
       await setSettings({
@@ -160,7 +179,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     // If we're currently tracking that domain, stop now.
     const active = await getActiveSession()
     if (active?.domain === domain) await endActiveSession()
-  })()
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -419,7 +438,7 @@ async function handleMessage<M extends Message>(
 
 chrome.runtime.onMessage.addListener(
   (message: Message, _sender, sendResponse) => {
-    handleMessage(message)
+    serialized(() => handleMessage(message))
       .then(sendResponse)
       .catch((err) => {
         console.error('[ttm] message handler failed', message.type, err)
