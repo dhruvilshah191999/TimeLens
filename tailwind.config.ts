@@ -3,7 +3,11 @@ import type { Config } from 'tailwindcss'
 
 const config: Config = {
   darkMode: ['class'],
-  content: ['./src/**/*.{ts,tsx,html}', './index.html'],
+  content: [
+    './src/**/*.{ts,tsx,html}',
+    './index.html',
+    './store/demo/**/*.{ts,tsx,html}',
+  ],
   theme: {
     extend: {
       borderRadius: {
@@ -43,6 +47,8 @@ const config: Config = {
           foreground: 'hsl(var(--destructive-foreground))',
         },
         success: 'hsl(var(--success))',
+        hover: 'hsl(var(--hover))',
+        track: 'hsl(var(--track))',
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',

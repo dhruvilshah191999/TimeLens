@@ -40,25 +40,55 @@ export const ACTIVE_GAP_MAX_MS = 150_000
 /** Flush the session buffer to local storage at least this often (ms). */
 export const BUFFER_FLUSH_MS = 30_000
 
+/**
+ * Intent categories, in display order (focused intents first). Colors are CSS
+ * variables defined in globals.css so they adapt to light/dark themes.
+ */
 export const DEFAULT_CATEGORIES: Category[] = [
+  { id: 'work', label: 'Work', color: 'var(--intent-work)', icon: 'work' },
   {
     id: 'learning',
     label: 'Learning',
-    color: '#3b82f6',
-    icon: 'graduation-cap-1',
+    color: 'var(--intent-learning)',
+    icon: 'learning',
   },
-  { id: 'work', label: 'Work', color: '#8b5cf6', icon: 'briefcase-1' },
+  { id: 'news', label: 'News', color: 'var(--intent-news)', icon: 'news' },
+  {
+    id: 'social',
+    label: 'Social',
+    color: 'var(--intent-social)',
+    icon: 'social',
+  },
+  {
+    id: 'shopping',
+    label: 'Shopping',
+    color: 'var(--intent-shopping)',
+    icon: 'shopping',
+  },
   {
     id: 'entertainment',
     label: 'Entertainment',
-    color: '#ec4899',
-    icon: 'play',
+    color: 'var(--intent-entertainment)',
+    icon: 'entertainment',
   },
-  { id: 'social', label: 'Social', color: '#f97316', icon: 'user-multiple-4' },
-  { id: 'news', label: 'News', color: '#eab308', icon: 'book-1' },
-  { id: 'shopping', label: 'Shopping', color: '#22c55e', icon: 'cart-1' },
-  { id: 'other', label: 'Other', color: '#6b7280', icon: 'layers-1' },
+  { id: 'other', label: 'Other', color: 'var(--intent-other)', icon: 'other' },
 ]
+
+/** Intents that count toward the "focused" share. */
+export const FOCUS_INTENTS = ['work', 'learning']
+
+/** Quick lookup of a category by its intent id (falls back to "Other"). */
+export const CATEGORY_BY_ID: Record<string, Category> = Object.fromEntries(
+  DEFAULT_CATEGORIES.map((c) => [c.id, c]),
+)
+
+export const OTHER_CATEGORY =
+  DEFAULT_CATEGORIES.find((c) => c.id === 'other') ?? DEFAULT_CATEGORIES[0]
+
+/** Resolve a category for an intent id, defaulting to "Other". */
+export function categoryFor(intent: string | undefined): Category {
+  return (intent && CATEGORY_BY_ID[intent]) || OTHER_CATEGORY
+}
 
 export const DEFAULT_SETTINGS: Settings = {
   idleThresholdSec: DEFAULT_IDLE_THRESHOLD_SEC,
@@ -67,16 +97,3 @@ export const DEFAULT_SETTINGS: Settings = {
   classificationEnabled: false,
   categories: DEFAULT_CATEGORIES,
 }
-
-/** Palette for domain charts when no category color applies. */
-export const CHART_COLORS = [
-  '#3b82f6',
-  '#8b5cf6',
-  '#ec4899',
-  '#f97316',
-  '#eab308',
-  '#22c55e',
-  '#06b6d4',
-  '#ef4444',
-  '#6b7280',
-]

@@ -2,52 +2,74 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * TimeLens visual system: a neutral graphite UI where the only color comes
+ * from the intent palette. Times render in a monospace "instrument" face.
+ */
 @layer base {
   :root {
-    --background: 220 24% 97%;
-    --foreground: 222 47% 11%;
+    --background: 80 10% 95%;
+    --foreground: 216 10% 10%;
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 216 10% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 245 70% 60%;
+    --popover-foreground: 216 10% 10%;
+    --primary: 216 10% 10%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 16% 95%;
-    --secondary-foreground: 222 47% 18%;
-    --muted: 220 16% 95%;
-    --muted-foreground: 220 9% 46%;
-    --accent: 220 16% 95%;
-    --accent-foreground: 222 47% 18%;
-    --destructive: 0 72% 51%;
+    --secondary: 90 9% 93%;
+    --secondary-foreground: 216 10% 10%;
+    --muted: 90 9% 93%;
+    --muted-foreground: 215 6% 40%;
+    --accent: 90 9% 93%;
+    --accent-foreground: 216 10% 10%;
+    --destructive: 4 77% 40%;
     --destructive-foreground: 0 0% 100%;
-    --success: 142 71% 45%;
-    --border: 220 14% 90%;
-    --input: 220 14% 90%;
-    --ring: 245 70% 60%;
-    --radius: 0.85rem;
+    --success: 145 49% 32%;
+    --border: 90 6% 88%;
+    --input: 90 6% 88%;
+    --ring: 216 10% 10%;
+    --radius: 0.875rem;
+    /* Subtle row hover and the empty track behind ribbons/bars. */
+    --hover: 90 9% 97%;
+    --track: 75 6% 90%;
+
+    /* Intent palette — the only accent colors in the UI. */
+    --intent-work: #2f5bd3;
+    --intent-learning: #2a9d8f;
+    --intent-news: #8e6ccb;
+    --intent-social: #e8a33d;
+    --intent-shopping: #c2457a;
+    --intent-entertainment: #e4572e;
+    --intent-other: #a3a8ae;
   }
 
   .dark {
-    --background: 222 32% 8%;
-    --foreground: 210 40% 96%;
-    --card: 222 26% 12%;
-    --card-foreground: 210 40% 96%;
-    --popover: 222 26% 12%;
-    --popover-foreground: 210 40% 96%;
-    --primary: 250 84% 68%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 222 20% 17%;
-    --secondary-foreground: 210 40% 96%;
-    --muted: 222 20% 17%;
-    --muted-foreground: 215 16% 62%;
-    --accent: 222 20% 19%;
-    --accent-foreground: 210 40% 96%;
-    --destructive: 0 63% 50%;
+    --background: 216 12% 8%;
+    --foreground: 75 7% 92%;
+    --card: 214 12% 11.5%;
+    --card-foreground: 75 7% 92%;
+    --popover: 214 12% 11.5%;
+    --popover-foreground: 75 7% 92%;
+    --primary: 75 7% 92%;
+    --primary-foreground: 216 12% 8%;
+    --secondary: 213 11% 15.5%;
+    --secondary-foreground: 75 7% 92%;
+    --muted: 213 11% 15.5%;
+    --muted-foreground: 212 7% 63%;
+    --accent: 213 11% 15.5%;
+    --accent-foreground: 75 7% 92%;
+    --destructive: 4 70% 60%;
     --destructive-foreground: 0 0% 100%;
-    --success: 142 64% 50%;
-    --border: 222 18% 19%;
-    --input: 222 18% 22%;
-    --ring: 250 84% 68%;
+    --success: 145 45% 52%;
+    --border: 213 11% 17%;
+    --input: 213 11% 20%;
+    --ring: 75 7% 92%;
+    --hover: 213 11% 13.5%;
+    --track: 213 11% 14%;
+
+    --intent-work: #5b82ea;
+    --intent-learning: #3db8a9;
+    --intent-other: #7d838a;
   }
 }
 
@@ -57,24 +79,19 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-      "Segoe UI", Roboto, sans-serif;
+    font-family: "Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif;
   }
 }
 
 @layer utilities {
-  /* Brand gradient used on the icon badge and primary CTA. */
-  .bg-brand-gradient {
-    background-image: linear-gradient(
-      135deg,
-      hsl(245 70% 62%),
-      hsl(270 76% 64%)
-    );
+  /* Monospace "instrument" figures for every time readout. */
+  .font-figure {
+    font-family: "Martian Mono", ui-monospace, monospace;
+    font-feature-settings: "tnum";
   }
-  .ring-soft {
-    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.04), 0 1px 3px 0 rgb(0 0 0 / 0.06);
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground;
   }
-  /* Thin, subtle scrollbars for the dashboard. */
   .scrollbar-thin::-webkit-scrollbar {
     width: 8px;
     height: 8px;
