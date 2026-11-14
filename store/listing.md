@@ -79,4 +79,6 @@ No, I am not using remote code.
 - Certify all three: data is not sold to third parties; not used or transferred for purposes unrelated to the single purpose; not used or transferred to determine creditworthiness or for lending.
 
 **Privacy policy URL**
-Required. Publish a short policy page (for example via GitHub Pages) stating that all data stays in `chrome.storage.local`, nothing is collected or transmitted, and users can export or delete their data at any time. Then paste its URL here.
+https://dhruvilshah191999.github.io/TimeLens/privacy.html
+
+(Source: `docs/privacy.html`, served by GitHub Pages from the `/docs` folder on `main`.)
