@@ -13,8 +13,9 @@ export default defineManifest({
     48: 'icons/icon-48.png',
     128: 'icons/icon-128.png',
   },
-  // <all_urls> is needed to read page titles for intent classification.
-  // We never transmit this data anywhere external in V1.
+  // No host permissions: the `tabs` permission already exposes the active
+  // tab's URL and title, which is all classification needs. Nothing is ever
+  // transmitted anywhere.
   permissions: [
     'tabs',
     'storage',
@@ -26,7 +27,6 @@ export default defineManifest({
     // No network requests — nothing about your browsing leaves the device.
     'favicon',
   ],
-  host_permissions: ['<all_urls>'],
   background: {
     service_worker: 'src/background/index.ts',
     type: 'module',

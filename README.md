@@ -2,7 +2,7 @@
 
 A privacy-first browser time tracker that classifies your time by **intent**, not just by domain.
 
-Most time trackers tell you "you spent 4h on YouTube." TimeLens aims to tell you "3h of that was Learning, 1h was Entertainment" — because the same site means different things at different times. Intent classification is auto-derived from the page title + URL using **on-device AI** (Chrome's built-in Gemini Nano), with graceful fallbacks. (Classification ships in Phase 2 — see status below.)
+Most time trackers tell you "you spent 4h on YouTube." TimeLens tells you "3h of that was Learning, 1h was Entertainment" — because the same site means different things at different times. Each page is labelled from its title and URL by a keyword ruleset, optionally refined by Chrome's **on-device** Gemini Nano.
 
 All your data stays in your browser. No servers, no telemetry, no accounts.
 
@@ -19,32 +19,16 @@ All your data stays in your browser. No servers, no telemetry, no accounts.
 
 ---
 
-## 📦 Phase status
+## ✨ Features
 
-This is a personal portfolio project built in phases.
-
-| Phase | Scope | Status |
-| ----- | ----- | ------ |
-| **Phase 1** | Core tracking: per-domain time, idle/focus pause, SPA handling, popup + dashboard, exclusions, export/reset | ✅ **Done (this build)** |
-| **Phase 2** | On-device AI intent classification (Gemini Nano → Groq → keyword rules) | ⏳ Planned |
-| **Phase 3** | Insights, trends, goals, onboarding, dark mode, animations | ⏳ Planned |
-
-### What works in Phase 1
-
-- ⏱️ Accurate per-domain time tracking via `chrome.tabs`, `chrome.windows`, `chrome.idle`.
-- 😴 Auto-pause when you're idle (configurable threshold, default 60s) or when the browser loses focus.
-- 🔀 SPA-aware: detects in-page route changes (YouTube video switches, etc.) via `chrome.webNavigation.onHistoryStateUpdated`.
-- 🧹 Sessions shorter than 5s are discarded as noise; raw sessions auto-pruned after 90 days.
-- 📊 Popup: today's total + donut of top sites + tracking toggle.
-- 📈 Dashboard: Overview (today's bars + recent sessions), Weekly (7-day trend + top sites), Settings.
-- 🚫 Exclude any site from tracking via right-click ("Stop tracking this site") or Settings.
-- 💾 Export all data as JSON; wipe all data.
-
-### What's stubbed / deferred
-
-- 🤖 **Intent classification** (`src/background/classifier.ts`) is a no-op stub — Phase 2.
-- ✨ **Insights** dashboard page is a placeholder explaining what's coming.
-- 🌙 Dark mode CSS variables exist but there's no toggle yet (Phase 3).
+- ⏱️ **Accurate tracking** — only the focused tab counts; pauses on idle (configurable, default 60s) and when the browser loses focus; audible tabs keep counting; never credits time across sleep/suspend.
+- 🏷️ **Intent labels** — Work, Learning, News, Social, Shopping, Entertainment, Other. Keyword rules (120+ known sites + title keywords) run instantly; for unclear pages, Gemini Nano can refine the label on-device. AI answers are cached per page so a page keeps one label.
+- 🔀 **Same site, different reasons** — sessions only merge when site *and* intent match, so a YouTube tutorial and a comedy clip stay separate.
+- 📊 **Today** — total time, split by intent, a 24-hour day ribbon, per-site intent splits, sessions grouped by day.
+- 📈 **Trends** — 7/30-day stacked bars by intent, comparison with the previous period, top sites.
+- 🧩 **Popup** — today at a glance, the current page and how it was labelled (rule or Nano).
+- 🚫 Exclude sites via right-click or Settings; export JSON; delete everything; 90-day auto-cleanup.
+- 🌙 Light and dark themes.
 
 ---
 
@@ -54,8 +38,8 @@ This is a personal portfolio project built in phases.
 - **React 19** + **TypeScript** (strict)
 - **Vite** + **@crxjs/vite-plugin** (HMR during dev)
 - **Tailwind CSS** + **shadcn/ui** components
-- **Recharts** (charts), **date-fns** (time math), **React Router** (dashboard)
-- **Zustand** available for state (Phase 1 keeps state in the service worker)
+- **date-fns** (time math), **React Router** (dashboard); charts are plain CSS — no chart library
+- Fonts (Schibsted Grotesk, Martian Mono) bundled locally via **@fontsource** — no runtime network requests
 - **Biome** (lint/format), **pnpm**
 
 ---
@@ -84,7 +68,7 @@ pnpm build        # type-checks then builds to dist/ (ready for the Web Store)
 
 ### Regenerating icons
 
-The clock icons are generated procedurally (zero deps):
+The lens icons are generated procedurally (zero deps):
 
 ```bash
 pnpm icons
@@ -102,12 +86,13 @@ src/
 │   ├── storage.ts     # typed chrome.storage wrappers + daily-total aggregation
 │   ├── idle-handler.ts# applies idle detection threshold from settings
 │   ├── messages.ts    # typed message bus (UI <-> background)
-│   └── classifier.ts  # intent classification — STUB (Phase 2)
+│   └── classifier.ts  # intent classification: keyword rules + on-device Gemini Nano
 ├── popup/             # toolbar popup (React)
 ├── dashboard/         # full-tab options page (React + React Router)
-├── components/ui/     # shadcn/ui components
+├── components/        # shared UI (intent bars, day ribbon, icons, switch)
 ├── lib/               # shared types, constants, time utils
-└── styles/            # Tailwind globals
+└── styles/            # Tailwind globals + design tokens
+store/                 # Chrome Web Store listing copy, assets and screenshot harness
 ```
 
 ---

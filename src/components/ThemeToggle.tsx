@@ -1,21 +1,21 @@
-import { Icon } from '@/components/Icon'
-import { Button } from '@/components/ui/button'
+import { MoonIcon, SunIcon } from '@/components/icons'
 import { useTheme } from '@/lib/theme'
+import { cn } from '@/lib/utils'
 
-export function ThemeToggle() {
+export function ThemeToggle({ className }: { className?: string }) {
   const { theme, toggle } = useTheme()
+  const dark = theme === 'dark'
   return (
-    <Button
-      variant="ghost"
-      size="icon"
+    <button
+      type="button"
       onClick={toggle}
-      aria-label="Toggle theme"
-      className="text-muted-foreground"
+      aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
+      className={cn(
+        'flex size-11 items-center justify-center rounded-[10px] border bg-card text-foreground transition-colors hover:bg-hover',
+        className,
+      )}
     >
-      <Icon
-        name={theme === 'dark' ? 'moon-half-right-5' : 'sun-1'}
-        className="text-xl"
-      />
-    </Button>
+      {dark ? <SunIcon className="size-4" /> : <MoonIcon className="size-4" />}
+    </button>
   )
 }

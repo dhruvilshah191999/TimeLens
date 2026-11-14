@@ -1,6 +1,6 @@
-// Generates the TimeLens extension icons — a "lens" mark (concentric ring +
-// focal dot) on a diagonal violet gradient, rounded-square. Anti-aliased via
-// 4x supersampling. Zero deps (Node's built-in zlib for PNG). Run: `pnpm icons`.
+// Generates the TimeLens extension icons — the lens mark (ring, focal dot and
+// two clock ticks, same geometry as src/components/LensMark.tsx) in white on a
+// graphite rounded square. Anti-aliased via 4x supersampling. Zero deps (Node's built-in zlib for PNG). Run: `pnpm icons`.
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -54,12 +54,17 @@ function encodePNG(size, rgba) {
   ])
 }
 
-// --- Palette (matches the in-app brand gradient) ---
-const GRAD_TL = [0x6f, 0x5e, 0xf0] // indigo (top-left)
-const GRAD_BR = [0x9a, 0x5c, 0xee] // violet (bottom-right)
+// --- Palette (matches the in-app graphite ink) ---
+const INK = [0x16, 0x18, 0x1b]
 const WHITE = [255, 255, 255]
-const lerp = (a, b, t) => a + (b - a) * t
-const clamp01 = (v) => Math.max(0, Math.min(1, v))
+
+/** Distance from point p to segment a–b. */
+function segDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax
+  const dy = by - ay
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+}
 
 /** Signed distance from a point to a rounded rectangle (negative = inside). */
 function roundedRectSDF(px, py, half, radius) {
@@ -78,18 +83,10 @@ function drawIcon(size) {
   const half = hi / 2 - hi * 0.04 // rounded-square half-extent (small margin)
   const corner = hi * 0.235
 
-  // Lens geometry (fractions of full size).
-  const ringR = hi * 0.34
-  const ringW = hi * 0.075 // ring half-thickness
-  const innerR = hi * 0.18
-  const innerW = hi * 0.035
-  const dotR = hi * 0.072
-  // focal accent dot, upper-right just inside the ring
-  const accAng = -Math.PI / 4
-  const accDist = hi * 0.34
-  const accX = c + Math.cos(accAng) * accDist
-  const accY = c + Math.sin(accAng) * accDist
-  const accR = hi * 0.05
+  // The mark is drawn in LensMark's 28-unit coordinate space, scaled to fill
+  // ~64% of the icon. Small sizes get slightly heavier strokes to stay crisp.
+  const scale = (hi * 0.64) / 28
+  const stroke = size <= 32 ? 1.45 : 1.1 // half stroke width, in mark units
 
   for (let y = 0; y < hi; y++) {
     for (let x = 0; x < hi; x++) {
@@ -99,22 +96,15 @@ function drawIcon(size) {
         hiBuf[i] = hiBuf[i + 1] = hiBuf[i + 2] = hiBuf[i + 3] = 0
         continue
       }
-      // background diagonal gradient
-      const t = clamp01((x + y) / (2 * hi))
-      let r = lerp(GRAD_TL[0], GRAD_BR[0], t)
-      let g = lerp(GRAD_TL[1], GRAD_BR[1], t)
-      let b = lerp(GRAD_TL[2], GRAD_BR[2], t)
-
-      const d = Math.hypot(x + 0.5 - c, y + 0.5 - c)
-      const onRing = Math.abs(d - ringR) <= ringW
-      const onInner = Math.abs(d - innerR) <= innerW
-      const inDot = d <= dotR
-      const inAcc = Math.hypot(x + 0.5 - accX, y + 0.5 - accY) <= accR
-      if (onRing || onInner || inDot || inAcc) {
-        r = WHITE[0]
-        g = WHITE[1]
-        b = WHITE[2]
-      }
+      const u = (x + 0.5 - c) / scale + 14
+      const v = (y + 0.5 - c) / scale + 14
+      const d = Math.hypot(u - 14, v - 14)
+      const onMark =
+        Math.abs(d - 12) <= stroke ||
+        d <= 5.5 ||
+        segDist(u, v, 14, 2, 14, 6) <= stroke ||
+        segDist(u, v, 26, 14, 22, 14) <= stroke
+      const [r, g, b] = onMark ? WHITE : INK
       hiBuf[i] = r
       hiBuf[i + 1] = g
       hiBuf[i + 2] = b
